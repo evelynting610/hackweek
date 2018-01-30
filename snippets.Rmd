@@ -1,0 +1,249 @@
+---
+title: "Snippets from Hayley"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+```{r}
+devtools::install_github("civisanalytics/civis-r")
+install.packages("ggrepel")
+# FINAL REPORT
+
+library(ggplot2)
+library(civis.deckR)
+library(dplyr)
+```
+
+
+```{r}
+##############################################################################
+# Gather Tweet Data for the last 7 Days
+##############################################################################
+
+SCRIPT_ID <- 7290260
+TOPICS_FILE_ID <- 5836414
+TREND_SPLIT_DAYS <- 2
+START_DATE <- format(Sys.Date() - 7, "%Y-%m-%d", tz = "US/Eastern")
+END_DATE <- format(Sys.Date(), "%Y-%m-%d", tz = "US/Eastern")
+
+arguments <- list(START_DATE = START_DATE,
+                  END_DATE = END_DATE,
+                  TOPICS_FILE_ID = TOPICS_FILE_ID,
+                  TREND_SPLIT_DAYS = TREND_SPLIT_DAYS)
+
+# Let's only run the script if it hasn't yet been run today:
+
+current_status <- civis::scripts_list_custom_runs(SCRIPT_ID)[[1]]
+last_run <- current_status$startedAt
+run_id <- current_status$id
+
+if (as.Date(last_run) < Sys.Date()) {
+  # Update the args to the template script, kick it off and wait for completion.
+  civis::scripts_put_custom(SCRIPT_ID, arguments = arguments)
+  run_id <- civis::scripts_post_custom_runs(SCRIPT_ID)[["id"]]
+  civis::await(civis::scripts_get_custom_runs, id = SCRIPT_ID, run_id = run_id)
+}
+# Download output of the script
+outputs <- civis::scripts_list_custom_runs_outputs(SCRIPT_ID, run_id)[[1]]
+civis::download_civis(outputs[["objectId"]], "outputs.tar.gz")
+untar("outputs.tar.gz")
+```
+
+
+```{r}
+##############################################################################
+# Read in Data
+##############################################################################
+
+# These files are from the output of that custom script
+tweets <- read.csv("outputs/tweets.csv")
+tweets <- tweets %>%
+  mutate(community = case_when(
+    High.activity.conservatives == 1 ~ "High Activity Conservatives",
+    High.activity.progressives == 1 ~ "High Activity Progressives",
+    Low.activity.moderates == 1 ~ "Low Activity Moderates",
+    Medium.activity.moderates == 1 ~ "Medium Activity Moderates",
+    TRUE ~ "Other")) %>%
+  dplyr::filter(!stringr::str_detect(urls, "unfollowspy"),
+                !stringr::str_detect(urls, "fllwrs"),
+                !stringr::str_detect(urls, "whounfollowedme"),
+                !stringr::str_detect(urls, "z5concept"),
+                !stringr::str_detect(urls, "cards[.]twitter"),
+                !stringr::str_detect(urls, "twittascope"),
+                !stringr::str_detect(urls, "cloudfront"),
+                !stringr::str_detect(urls, "boingboing"),
+                !stringr::str_detect(urls, "oovoo"))
+
+```
+
+
+```{r}
+get_top_content <- function(tweets, x, n, top_days = 7, partisan_df = NULL) {
+  tweets %>%
+    dplyr::mutate(date = as.Date(posted_time)) %>%
+    dplyr::filter(date %in% unique(rev(sort(.$date)))[1:top_days]) %>%
+    dplyr::filter(urls != "", community == x,
+                  !stringr::str_detect(urls, "unfollowspy"),
+                  !stringr::str_detect(urls, "fllwrs"),
+                  !stringr::str_detect(urls, "whounfollowedme"),
+                  !stringr::str_detect(urls, "z5concept"),
+                  !stringr::str_detect(urls, "cards[.]twitter")) %>%
+     # i group by user id and then again by urls to get user share
+    dplyr::select(user_id, urls, url_titles, url_descriptions) %>%
+    unique() %>%
+    dplyr::group_by(urls, url_titles) %>%
+    # how many times is each url coming up
+    dplyr::summarize(n_users = n()) %>%
+    dplyr::arrange(dplyr::desc(n_users)) %>%
+    
+    # i'm just joining to trends to get the domains here
+    #dplyr::left_join(dplyr::select(trends, urls = item, domain)) %>%
+  
+    # get the domains here
+    dplyr::mutate(domain = domain_name(urls)) %>%
+    # only include certain domains
+    if (!is.null(partisan_df)) dplyr::inner_join(dplyr::select(partisan_df, domain = item, item)) %>%
+    .[1:n, ] 
+}
+```
+
+```{r}
+# now i want a plot to look at user share by domains
+# @param tweets dataframe tweets.csv
+# @param x character string, community
+# @param n integer number of links to include
+link_plot <- function(tweets, x, n = 8, top_days = 7) {
+  color <- "#FFD35B"
+  get_top_content(tweets, x, n, top_days) %>%
+    dplyr::mutate(domain = as.character(domain), url_titles = as.character(url_titles)) %>%
+    dplyr::mutate(url_titles = ifelse(url_titles == "", urls, url_titles)) %>%
+    dplyr::mutate(domain = ifelse(is.na(domain), stringr::word(urls, 1, sep = "/"),
+                                  domain)) %>%
+    # calculating user share here
+    dplyr::mutate(user_share = n_users/length(unique(tweets$user_id[tweets$community == x]))) %>%
+    dplyr::ungroup() %>%
+    dplyr::mutate(x = rep(1, n), y = rev(seq(n))) %>%
+    civis.deckR::ggplot(ggplot2::aes(as.numeric(rev(reorder(x, user_share))), y)) +
+    ggplot2::geom_text(aes(label = dotdot(as.character(url_titles))),
+                       hjust = 0, family = "Lato", size = 4,
+                       fontface = "bold") +
+    geom_label(aes(label = scales::percent(round(user_share, 4)),
+                   x = x - .525, fill = user_share, color = NA)) +
+    geom_text(aes(label = scales::percent(round(user_share, 4)),
+                  x = x - .525), family = "Lato") +
+    ggplot2::geom_text(aes(label = domain,
+                           y = y - .25),
+                       hjust = 0, family = "Lato", size = 3.5,
+                       fontface = "italic") +
+    ggplot2::theme(axis.text = ggplot2::element_blank(),
+                   axis.ticks = ggplot2::element_blank(),
+                   panel.grid = ggplot2::element_blank(),
+                   axis.title = ggplot2::element_blank(),
+                   panel.border = element_blank()) +
+    ggplot2::xlim(c(-.000005, n)) +
+    ggplot2::ylim(c(-.005, n + .05)) +
+    guides(fill = F) +
+    scale_fill_gradient(high = generate_color_pal(10, color2 = color)[8],
+                        low = generate_color_pal(10, color2 = color)[3]) +
+    ggtitle(paste0("Content trending among the ", cleanup(x), " Community"))
+    #ggsave("ppt_left_news_moderates_Jan_26.png", width = 12, height = 6)
+}
+```
+
+
+```{r}
+# Now we'll add the link plots to the deliverable
+x = "Medium Activity Moderates"
+link_plot(tweets, x)
+#unit(cleanup(x), "URL Deepdive", link_plot(tweets, x))
+```
+
+
+```{r}
+##############################################################################
+# Aggregation Functions
+##############################################################################
+
+get_unique_words <- function(x) {
+  words <- stringr::str_split(x, " ") %>% unlist() %>% unique()
+  paste(words, collapse = " ")
+}
+
+collapse_users <- function(tweets) {
+  tweets %>%
+    filter(!is.na(probability.conservative)) %>%
+    group_by(user_id,
+             community,
+             politics.activity,
+             probability.conservative) %>%
+    summarize(uniq_words = get_unique_words(tokens_ws))
+}
+
+get_top_words <- function(users, n = 100) {
+  num_users <- nrow(users)
+  top_words <- users$uniq_words %>%
+    stringr::str_split(pattern = " ") %>%
+    unlist() %>%
+    tibble::as.tibble() %>%
+    group_by(word = value) %>%
+    summarize(n = n(),
+              percent_of_user_share = n() / num_users) %>%
+    filter(word != "") %>%
+    arrange(desc(n)) %>%
+    .[1:n, ]
+  top_words$p_conserv <- get_words_p_conservative(users, top_words)
+  top_words
+}
+
+get_words_p_conservative <- function(users, top_words) {
+  toks_by_user <- stringr::str_split(users$uniq_words, " ")
+  p_conserv <- sapply(top_words$word, function(word) {
+    contains_word <- sapply(toks_by_user, function(x) word %in% x)
+    mean(users[contains_word, ]$probability.conservative)
+  })
+  p_conserv
+}
+
+get_top_words_by_community <- function(users, n=10) {
+  top_words <- lapply(unique(users$community), function(x) {
+    get_top_words(users[users$community == x, ], n)
+  })
+  names(top_words) <- unique(users$community)
+  top_words
+}
+
+# util/formatting functions ---
+minmax <- function(x) c(min(x), max(x))
+mydate <- function(x) {
+  dates <- minmax(x) %>% format(format = "%b %d")
+  paste("From", format(min(x), format = "%b %d"), "to", dates[2])
+}
+dotdot <- function(y) {
+  lapply(y, function(x) {
+    ifelse(nchar(x) < 100, x, paste0(substr(x, 1, 100), "..."))
+  }) %>% unlist
+}
+
+### Store values
+n <- 10
+users <- collapse_users(tweets)
+top_words <- get_top_words(users, n)
+top_words_by_community <- get_top_words_by_community(users, n)
+top_words_by_community$Other <- NULL
+top_words_by_community <- Filter(Negate(is.null), top_words_by_community)
+communities <- names(top_words_by_community)
+```
+
+```{r}
+domain_name <- function(urls) {
+  no_www <- ifelse(stringr::str_detect(urls, "www"), substring(urls, 5), substring(urls, 1) )
+  split_by_slash = stringr::str_split_fixed(no_www, "/", 2)
+  split_by_slash[,1]
+}
+```
+

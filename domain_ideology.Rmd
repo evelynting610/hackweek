@@ -1,0 +1,110 @@
+---
+title: "domain_ideology"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+require(ggplot2)
+```
+
+## R Markdown
+
+```{r cars}
+domain_df <- read.csv("domain/domain_ideology_activity.csv")
+domain_df <- dplyr::filter(domain_df, number.of.users > 50)
+```
+
+```{r}
+right_news <- dplyr::filter(domain_df, probability.conservative > .6)
+left_news <- dplyr::filter(domain_df, probability.conservative < .35)
+```
+
+## Plots
+
+```{r}
+plot(politics.activity~probability.conservative, xlab="Probability Conservative", ylab="Politics Activity", main="Domain Ideology from Twitter", data=domain_df)
+```
+
+```{r}
+top_political_activity <- domain_df %>%
+  dplyr::arrange(probability.conservative) %>%
+  dplyr::filter(politics.activity>.35) %>%
+  dplyr::rename(domain = item)
+```
+
+```{r}
+top_political_activity$domain <- factor(top_political_activity$domain, levels = top_political_activity$domain[order(-top_political_activity$probability.conservative)])
+```
+
+```{r}
+n <- nrow(top_political_activity)
+top_political_activity <- mutate(top_political_activity, SE.probability.conservative = SD.probability.conservative/sqrt(n-1) )
+```
+
+```{r}
+ggplot(top_political_activity, aes(probability.conservative, domain)) +geom_point() +
+  ggplot2::geom_errorbarh(aes(xmax = probability.conservative+SE.probability.conservative, xmin = probability.conservative - SE.probability.conservative)) +
+  #ggplot2::theme(axis.text = ggplot2::element_blank(),
+                 #axis.ticks = ggplot2::element_blank(),
+                 #panel.grid = ggplot2::element_blank()) +
+  ggplot2::ggtitle("News Sites Ranked By Ideology")
+```
+
+```{r}
+ggsave("news_sites_ideology.png", width=30, height = 15, units = "cm")
+```
+
+```{r}
+left_news_plot <- dplyr::rename(left_news, domain = item)
+```
+
+```{r}
+left_news_plot$domain <- factor(left_news_plot$domain, levels = left_news_plot$domain[order(-left_news_plot$probability.conservative)])
+```
+
+```{r}
+n <- nrow(left_news_plot)
+left_news_plot <- mutate(left_news_plot, SE.probability.conservative = SD.probability.conservative/sqrt(n-1) )
+```
+
+```{r}
+ggplot(left_news_plot, aes(probability.conservative, domain)) +geom_point() +
+  ggplot2::geom_errorbarh(aes(xmax = probability.conservative+SE.probability.conservative, xmin = probability.conservative - SE.probability.conservative)) +
+  ggplot2::ggtitle("Domains Shared by the Far Left")
+```
+```{r}
+ggsave("news_sites_left.png", width=40, height = 20, units = "cm")
+```
+
+```{r}
+right_news_plot <- dplyr::rename(right_news, domain = item)
+```
+
+```{r}
+right_news_plot$domain <- factor(right_news_plot$domain, levels = right_news_plot$domain[order(-right_news_plot$probability.conservative)])
+```
+
+```{r}
+n <- nrow(right_news_plot)
+right_news_plot <- mutate(right_news_plot, SE.probability.conservative = SD.probability.conservative/sqrt(n-1) )
+```
+
+```{r}
+ggplot(right_news_plot, aes(probability.conservative, domain)) +geom_point() +
+  ggplot2::geom_errorbarh(aes(xmax = probability.conservative+SE.probability.conservative, xmin = probability.conservative - SE.probability.conservative)) +
+  ggplot2::ggtitle("Domains Shared by the Far Right")
+```
+
+```{r}
+ggsave("news_sites_right.png", width=40, height = 20, units = "cm")
+```
+
+```{r domains, echo=FALSE}
+plot(politics.activity~probability.conservative, xlab="Probability Conservative", ylab="Politics Activity", main="Right Ideology from Twitter", data=right_news)
+with(right_news, text(politics.activity~probability.conservative, labels=right_news[,1]), pos=4)
+```
